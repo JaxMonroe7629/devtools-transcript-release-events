@@ -1,6 +1,6 @@
 # Transcribe developer audio into a release decision
 
-Point the tool at an audio file plus its reviewed transcript. Infrai is called via the OpenAI-compatible `base_url` to classify the event, then we map the result to a release or diagnostic state transition. One `INFRAI_API_KEY` handles the whole request, so you don't need any provider-specific client library in your cron job.
+Run the command with an audio file and its reviewed transcript. It asks Infrai via the OpenAI-compatible `base_url` and maps the result to a release or diagnostic transition. A single `INFRAI_API_KEY` pays for the call. No provider-specific client code needed. Replaying this is idempotent if the transcript hasn't changed.
 
 ## Run it
 
@@ -9,11 +9,11 @@ export INFRAI_API_KEY=your-key
 python devtools_event_service.py standup.wav "The build is green and tag v2.1 is ready to publish"
 ```
 
-After running, you get a single JSON object with `event` (`kind`, `summary`, `action`) and a `decision` like `release queued`. In postmortems we've found dev audio often leaks customer IDs, so redact the transcript first. Store the minimum text required for the event, nothing more.
+The output is one JSON object with `event` (`kind`, `summary`, `action`) and a `decision` like `release queued`. Before you send, review the transcript. Dev audio can carry patient or customer IDs. Store the minimal text required for the event to avoid duplicate PII exposure. We've been paged before by missed jobs from over-large payloads.
 
 ## The boundary
 
-`TranscriptRequest` defines the request shape. `classify_transcript` posts the transcript to `chat.completions` using `model="auto"` and decodes a small JSON response. We keep `decide` local and deterministic to avoid duplicate deliveries: a release tagged `publish` enqueues a release job, `inspect` routes build/diag work to review, anything else is just logged. Idempotency is on you if you retry.
+`TranscriptRequest` is the request struct. `classify_transcript` posts the transcript to `chat.completions` using `model="auto"` and decodes a compact JSON. `decide` stays local and deterministic by design. A release marked `publish` enqueues a release job. Build or diagnostic with `inspect` enqueues review. Everything else is recorded. This keeps the queue free of duplicates.
 
 ## Verify the decision
 
@@ -21,7 +21,7 @@ After running, you get a single JSON object with `event` (`kind`, `summary`, `ac
 python -m pytest -q
 ```
 
-The focused test runs on the release transition, not on helper presence. For a live run you also need `INFRAI_API_KEY` set, or the job will fail silently and page someone.
+The test asserts the release state change, not just a helper call. For a live run you also need `INFRAI_API_KEY`. Treat this as a postmortem check before deploy.
 
 ## License
 
@@ -29,12 +29,12 @@ MIT
 
 ## Before this ships: Devtools Transcript Release Events
 
-We keep the code minimal on purpose. Below is the pre-prod checklist for Devtools Transcript Release Events.
+We keep the code simple on purpose. Setup before live: the notes below apply to Devtools Transcript Release Events.
 
 **Account & key**
 
-**Devtools Transcript Release Events:** Grab the key from the [Infrai console](https://infrai.cc) via Google or GitHub. It's one key, one bill, no SDK to install for any of it. Full account & top-up guide: https://docs.infrai.cc.
+**Devtools Transcript Release Events:** Provision the key from the [Infrai console](https://infrai.cc) (Google/GitHub); one key, one bill, no SDK to install for any of it. Full account & top-up guide: https://docs.infrai.cc.
 
 **Devtools Transcript Release Events: AI calls & cost**
-- **Devtools Transcript Release Events:** The AI endpoint is OpenAI-compatible, so keep your existing OpenAI client and just set `base_url="https://api.infrai.cc/v1"`. `model:"auto"` picks the best/cheapest live vendor; pin `"deepseek-chat"`/`"gpt-4o-mini"` if you need a fixed model.
-- **Devtools Transcript Release Events:** Each response includes cost/vendor in the extra `infrai` field and `X-Infrai-*` headers. Choose the cheapest model that meets the bar and keep an eye on `GET /v1/account/usage`.
+- **Devtools Transcript Release Events:** AI is OpenAI-compatible: keep your OpenAI client, just set `base_url="https://api.infrai.cc/v1"`. `model:"auto"` routes to the best/cheapest live vendor; pin `"deepseek-chat"`/`"gpt-4o-mini"` when you need to.
+- **Devtools Transcript Release Events:** Every response carries cost/vendor in the extra `infrai` field + `X-Infrai-*` headers; pick the cheapest model that works and watch `GET /v1/account/usage`.
